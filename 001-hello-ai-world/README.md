@@ -11,9 +11,9 @@
  
 머신러닝은 인공지능의 한 분야로, 경험(데이터)을 통해 스스로 개선하는 방식이다. 머신러닝은 크게 지도학습, 비지도학습, 강화학습으로 나뉜다. 여기선 간단한 개념정리만 해둔다.
 
-- 지도학습(Supervised Learning): 답이 주어진 여러 예제를 통해 학습하는 방식
-- 비지도학습(Unsupervised Learning): 답이 주어지지 않은 여러 예제에서 패턴을 찾아 학습하는 방식
-- 강화학습(Reinforcement Learning): 시행착오와 그에 따른 보상과 처벌 체계를 통해 학습하는 방식
+- **지도학습(Supervised Learning)**: 답이 주어진 여러 예제를 통해 학습하는 방식
+- **비지도학습(Unsupervised Learning)**: 답이 주어지지 않은 여러 예제에서 패턴을 찾아 학습하는 방식
+- **강화학습(Reinforcement Learning)**: 시행착오와 그에 따른 보상과 처벌 체계를 통해 학습하는 방식
 
 > 그래서 어떻게 쓰는건데?
 
@@ -28,3 +28,59 @@
 > 어떤 언어를 사용해야하나?
 
 파이썬이 대세다. 파이썬은 데이터 분석과 머신러닝에 대한 라이브러리가 잘 갖춰져 있고, 사용하기 쉽다. 라이브러리로는 PyTorch를 사용한다. PyTorch는 페이스북에서 만든 딥러닝 라이브러리로, 유연하고 파이썬 기반으로 작동한다.
+
+#### 인공신경망 모델
+데이터 수집과 전처리 과정은 나중에 자세히 알아보도록 하고, 인공신경망 모델의 작동 흐름을 좇아가보자.
+
+뇌는 여러 층의 수많은 뉴런들이 시냅스로 얽혀 정보를 처리하고, 인공신경망은 이런 뇌의 구조를 모방한다. 인공신경망에서 층은 레이어, 뉴런은 노드, 시냅스는 노드 간 연결을 말한다. 뇌의 정보의 처리 과정은 순전파에 해당하고, 학습 과정은 역전파에 해당한다.
+
+각 노드엔 `weight`(가중치)와 `bias`(편향)가 있다. 이를 `parameters`(매개변수)라고 하고 훈련이 진행됨에 따라 계속해서 수정되는 값이다. 기본적인 선형 회귀 모델은 *y = mx + b*이고, 여기서 m이 가중치, b가 편향이다. 이 m과 b를 반복 수정해 손실을 최소화시킨다.  데이터가 입력으로 들어와 노드들이 있는 여러 층을 거쳐 예측값이 출력이 되는데 이 방향의 흐름을 `forward propagation`(순전파)이라고 한다. 이렇게 나온 예측치와 레이블(정답)의 오차를 계산하는 과정이 `loss function`이고, 이 오차를 최소화하기 위해 역방향으로 각 노드에 있는 weights와 biases를 수정해나가는걸 `optimizing`이라고 한다. 또한, 이런 역방향의 흐름을 `backward propagation`이라고 한다.
+
+이 전체 흐름을 코드로 살펴보자.
+
+```commandline
+# Create a Model
+class SimpleNeuralNetwork(nn.Module):
+    def __init__(self, input_size, output_size):
+        super(SimpleNeuralNetwork, self).__init__()
+        self.linear = nn.Linear(input_size, output_size)
+
+    def forward(self, x):
+        x = self.linear(x)
+        return x
+        
+# Instantiate the model
+simpy = SimpleNeuralNetwork(1, 1)
+
+# Create a simple dataset
+X = torch.tensor([[1.0], [2.0]])
+y_hat = torch.tensor([[2.0], [4.0]])
+
+# Print the model parameters
+print(f"Initial weights: {simpy.linear.weight}")
+print(f"Initial bias: {simpy.linear.bias}")
+
+# Make a prediction
+y = simpy(X)
+print(f"Prediction before training: {y}")
+
+# Calculate the loss
+criterion = nn.MSELoss()
+loss = criterion(y, y_hat)
+print(f"Loss: {loss}")
+
+# Optimize the model
+optimizer = torch.optim.SGD(simpy.parameters(), lr=0.01)
+optimizer.zero_grad()
+loss.backward()
+optimizer.step()
+
+# Print the model parameters
+print(f"Updated weights: {simpy.linear.weight}")
+print(f"Updated bias: {simpy.linear.bias}")
+
+# Make a prediction
+y = simpy(X)
+print(f"Prediction after training: {y}")
+print(f"Loss: {criterion(y, y_hat)}")        
+```
