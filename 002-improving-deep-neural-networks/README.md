@@ -33,7 +33,42 @@ L1, L2 Regularization에서는 패널티의 강도를 조절하는 *lambda* 값(
 [Regularization 코드 예시](./regularization.py)
 
 ### Optimization
+모델의 주된 목적은 손실 함수의 값을 최소화하는 것이다. 이 과정에서 'partial derivative(편미분)'을 사용하는데, 편미분이란 함수의 한 변수에 대한 미분을 의미한다.
+여기서 변수는 손실 함수에 대한 각 가중치와 편향을 말하고, 여기에 대한 기울기를 계산함으로써 어느 방향으로 가야 손실이 감소하는지 알 수 있다.
+
+이 미분 값(기울기)은 해당 파라미터를 조금 변경했을 때, 손실 함수가 얼마나 변화하는지를 나타내고,
+기울기의 방향은 손실을 증가시키는 방향을 가리킨다. 따라서, 우리는 기울기의 반대 방향으로 파라미터를 업데이트함으로써 손실을 줄일 수 있다.
+
+[Optimization 코드 예시](./optimization.py)
 
 ### Hyperparameter Tuning
+모델의 성능을 최대화하기 위해 하이퍼파라미터의 최적값을 찾는 과정이다.
+1. **Learning Rate**
+2. **Batch Size**
+3. **Epochs**
+4. **Number of Layers**
+5. **Units per Layer**
+6. **Dropout Rate**
+7. **Patience for Early Stopping**
+8. **L1, L2 Regularization Strength**
+
+그 외로 **Optimizer**, **Activation Function**, **Loss Function** 등도 하이퍼파라미터에 속한다.
+
+하이퍼파라미터 튜닝은 다음과 같은 방법으로 수행할 수 있다.
+1. **Grid Search**: 가능한 모든 조합을 시도하여 최적의 하이퍼파라미터를 찾는 방법이다. 하지만, 계산 비용이 매우 높다.
+2. **Random Search**: 무작위로 하이퍼파라미터를 선택하여 최적의 하이퍼파라미터를 찾는 방법이다. Grid Search보다 더 빠르게 좋은 결과를 도출할 수 있다.
+3. **Bayesian Optimization**: 이전 결과를 기반으로 하이퍼파라미터를 선택하여 최적의 하이퍼파라미터를 찾는 방법이다.
+4. **Automated Hyperparameter Tuning**: AutoML 라이브러리를 사용하여 최적의 하이퍼파라미터를 찾는 방법이다. 이 방법은 계산 비용이 낮고, 사용하기 쉽다.
+5. **Manual Search**: 경험과 직관을 사용하여 하이퍼파라미터를 선택하는 방법이다.
 
 ### Model Evaluation and Selection
+모델 평가는 모델의 성능을 측정하고 검증하는 과정이다.
+1. **Train-Validation-Test Split**: 모델의 일반화 능력을 평가하기 위해서, 데이터셋을 훈련, 검증, 테스트 세트로 나누는 방법이다.
+   - 훈련 세트: 모델을 훈련하는 데 사용되는 데이터셋이다.
+   - 검증 세트: 하이퍼파라미터 튜닝과 모델 선택을 위해 사용되며, 모델의 성능을 평가하는 데 사용된다.
+   - 테스트 세트: 최종 모델의 성능을 평가하기 위해 사용되고, 훈련 과정에서 이 데이터셋은 사용되지 않아야한다.
+2. **Cross-Validation**: 데이터의 양이 제한적일 때, 데이터를 최대한 활용하여 모델의 성능을 평가하는 방법이다. 데이터셋을 여러 개의 작은 셋으로 나누고 그 중 하나를 검증에, 나머지는 훈련에 사용한다. 이 과정을 모든 데이터셋에 대해 반복하여, 모델 성능을 종합적으로 평가한다.
+3. **Evaluation Metrics**: 모델의 성능을 측정하는 지표이다. 분류 문제에서는 정확도, 정밀도, 재현율, F1 점수, AUC 등이 있고, 회귀 문제에서는 MSE, RMSE, MAE, R-squared 등이 있다.
+4. **Bias-Variance Tradeoff**: Bias은 모델이 데이터의 복잡성을 충분히 모델링하지 못하는 경우 발생하고, Variance는 모델이 훈련 데이터에 과하게 적합되어 새로운 데이터에 대한 일반화 능력이 떨어지는 경우 발생하는 오류이다. 높은 편향은 낮은 분산을 의미하고, 그 반대도 마찬가지이다. 즉, 이 둘 사이엔 상충 관계가 있어서 적절한 균형을 맞추는 게 중요하다.
+
+이 외에도 **Ensemble Learning**, **Bootstraping** 등 다양한 개념들을 포함한다.
