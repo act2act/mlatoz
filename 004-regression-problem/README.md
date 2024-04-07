@@ -272,5 +272,103 @@ class Predictor(nn.Module):
 또한, 모든 모델과 데이터셋에는 성능 한계가 존재하며, 모델 성능을 단순히 현재의 검증 손실 수치로만 판단하지 않고,
 모델이 해결하고자 하는 문제에 대해 얼마나 잘 대응하는지를 종합적으로 평가하는 것이 중요하다는 점도 중요하다.
 
+검증 데이터의 평가까지 마친 찬은 이제 테스트 데이터를 사용해 모델의 성능을 최종적으로 평가하기로 한다.
+
+```commandline
+with torch.no_grad():
+    test_output = predictor(test_X)
+    test_loss = criterion(test_output, test_Y)
+    print(f"Test Loss: {test_loss.item()}")
+```
+
+![test_loss](images/test_try.png)
+
+테스트 평가까지 마친 찬은 이제 모델에 새로운 데이터를 넣어 예측을 해보기로 한다.   
+
+```commandline
+# Load the new data for prediction
+new_close = pd.DataFrame()
+
+new_tickers = ["ASML",]
+for ticker in new_tickers:
+    stock = yf.Ticker(ticker)
+    hist = stock.history(period="10y", interval="1d").resample("QE").mean()
+    closing_price = hist["Close"]
+
+    new_close[ticker] = closing_price
+```
+
+불러온 새로운 데이터 또한 기존 데이터와 동일한 전처리 과정을 거쳐야한다.
+코드의 중복을 줄이기 위해 전처리 과정을 함수로 만들어 사용하기로 한다.
+
+```commandline
+def preprocess(data):
+    # Define the input X and target Y using time lagged data
+    X = data.iloc[:-1]
+    Y = data.iloc[1:]
+
+    # Data splitting
+    train_ratio = 0.8
+    validation_ratio = 0.1
+    test_ratio = 0.1
+
+    # 각 세트에 할당할 데이터 포인트의 수 계산
+    total_points = data.shape[0]
+    train_points = int(total_points * train_ratio)
+    validation_points = int(total_points * validation_ratio)
+    test_points = total_points - train_points - validation_points
+
+    # 데이터 순서대로 분할
+    train_X = X[:train_points]
+    train_Y = Y[:train_points]
+
+    validation_X = X[train_points:train_points + validation_points]
+    validation_Y = Y[train_points:train_points + validation_points]
+
+    test_X = X[train_points + validation_points:]
+    test_Y = Y[train_points + validation_points:]
+
+    # 데이터를 PyTorch 텐서로 변환
+    train_X = torch.tensor(train_X.values, dtype=torch.float32)
+    train_Y = torch.tensor(train_Y.values, dtype=torch.float32)
+
+    validation_X = torch.tensor(validation_X.values, dtype=torch.float32)
+    validation_Y = torch.tensor(validation_Y.values, dtype=torch.float32)
+
+    test_X = torch.tensor(test_X.values, dtype=torch.float32)
+    test_Y = torch.tensor(test_Y.values, dtype=torch.float32)
+
+    return train_X, train_Y, validation_X, validation_Y, test_X, test_Y
+```
+
+새로운 데이터의 shape은 (41, 1)로 기존 데이터의 shape (41, 10)과 다르다.
+그대로 모델에 입력으로 넣게 되면 행렬 연산에서 차원에 대한 에러가 발생하기 때문에, 찬은 새로운 데이터를 기존 데이터와 동일한 shape으로 변환하기로 한다.
+
+```commandline
+# new_train_X의 형태를 조정
+predict_X = torch.zeros(new_train_X.size(0), 10)  # 10개의 특성을 가진 새로운 텐서 생성
+predict_X[:, 0] = new_train_X.squeeze()  # 첫 번째 특성에만 원래 데이터를 넣고 나머지는 0으로 남김
+```
+
+찬은 이제 모델에 새로운 데이터를 넣어 예측을 해보기로 한다.
+```commandline
+# 새로운 데이터에 대한 예측
+predictor.eval()
+with torch.no_grad():
+    prediction = predictor(predict_X)
+
+    print(f"New data prediction: {prediction[:, 0]}")
+```
+
+![prediction](images/prediction.png)
+
+ASML의 실제 주가와 예측한 주가를 비교해본 찬은 모델의 예측 정확도에 다소 실망했지만,
+이번 프로젝트를 통해 처음부터 끝까지 모델을 만들어보는 과정만으로도 많은 것을 배울 수 있었다고 생각한다.
+
+찬은 이러한 인공지능과의 상호작용이 불러올 미래의 변화를 상상하며 미래에 대한 두려움이 아닌 호기심을 가지고 더 많은 프로젝트를 진행해보기로 한다.
+
+![scene3](images/scene3.png)
+
 ------------------------------------------------------------------------------------------------------------------------
-### Multiple Regression
+### Multi linear regression
+찬은 close price만을 사용한 단순한 선형 회귀 모델을 사용했지만, 이번에는 financial data를 추가하여 multi linear regression을 사용해보기로 한다.

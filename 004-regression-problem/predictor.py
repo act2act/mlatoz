@@ -5,6 +5,7 @@ class Predictor(nn.Module):
     def __init__(self, input_dim, hidden_dim1, hidden_dim2, output_dim):
         super(Predictor, self).__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dim1)
+        self.hidden_dim1 = hidden_dim1
         # self.bn1 = nn.BatchNorm1d(hidden_dim1)
         self.relu1 = nn.ReLU()
         # self.dropout = nn.Dropout(0.3)
