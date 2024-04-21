@@ -1,4 +1,4 @@
-## Regression
+# Regression
 ![scene1](images/scene1.png)
 찬은 프리랜서 데이터 사이언티스트로 일하고 있다. 
 단순한 데이터 사이언티스트일 뿐만 아니라, 새로운 AI 기술에 끝없이 적응하며 학습하는 개방적이고 호기심이 많은, 자유로운 영혼을 가진 사람이다.
@@ -370,5 +370,355 @@ ASML의 실제 주가와 예측한 주가를 비교해본 찬은 모델의 예�
 ![scene3](images/scene3.png)
 
 ------------------------------------------------------------------------------------------------------------------------
-### Multi linear regression
+# Multi linear regression
 찬은 close price만을 사용한 단순한 선형 회귀 모델을 사용했지만, 이번에는 financial data를 추가하여 multi linear regression을 사용해보기로 한다.
+
+회사는 전처럼 tech industry의 top 10 기업을 사용하고, financial data를 추가하기로 한다.
+특성으로 사용할 financial data와 불러올 코드는 이 모든 프로젝트의 벤치마크이자 찬의 롤모델인 [대두족장님 깃헙](https://github.com/neobundy/Deep-Dive-Into-AI-With-MLX-PyTorch.git)의 코드를 참고했다.
+
+### Data Collection
+
+```commandline
+for ticker in tickers:
+    stock = yf.Ticker(ticker)
+
+    # Fetch 10 years of historical data
+    hist = stock.history(period="10y", interval="1d").resample("QE").mean()
+
+    # Get current info
+    info = stock.info
+    selected_info = {
+        'CurrentPrice': info.get('currentPrice'),
+        'MarketCap': info.get('marketCap'),
+        'BookValue': info.get('bookValue'),
+        'ProfitMargins': info.get('profitMargins'),
+        'EarningsGrowth': info.get('earningsGrowth'),
+        'RevenueGrowth': info.get('revenueGrowth'),
+        'ReturnOnEquity': info.get('returnOnEquity'),
+        'ForwardEPS': info.get('forwardEps'),
+        'TrailingEPS': info.get('trailingEps'),
+        'ForwardPE': info.get('forwardPE'),
+        'TrailingPE': info.get('trailingPE'),
+        'FreeCashflow': info.get('freeCashflow')
+    }
+
+    # Repeat the info data for each date in the historical data
+    for key, value in selected_info.items():
+        hist[key] = value
+
+    # Add a column for the ticker symbol
+    hist['Ticker'] = ticker
+
+    # Use pd.concat to append this data to the main DataFrame
+    historical_data = pd.concat([historical_data, hist], ignore_index=True)
+
+# Reset the index of the DataFrame
+historical_data.reset_index(inplace=True, drop=True)
+```
+
+![financial_data](images/2nd_dataframe.png)
+
+dataframe을 만든 찬은 앞으로 할 일을 요리에 빗대어 되짚어보기로 한다.
+1. 요리 재료의 공수: 데이터 수집
+2. 재료의 상태 확인: 데이터 탐색(Exploratory Data Analysis; EDA)
+3. 재료의 가공: 데이터 전처리
+4. 요리법: 모델링
+5. 요리: 학습
+6. 맛보기 후 조정: 평가 후 수정
+
+### Exploratory Data Analysis
+
+데이터 수집을 마친 찬은 데이터 타입 확인, 결측치, 분포 확인 같은 기본적인 데이터 탐색을 시작한다.
+
+```commandline
+# Display the DataFrame
+print(historical_data)
+
+# Check for missing values and data types
+print(historical_data.info())
+```
+
+하지만, 각 열 내엔 여러 기업의 데이터가 섞여있어서 의미 있는 결과가 나오지 않을 것이라 예상한 찬은 각 기업별로 데이터를 분리하여 탐색하기로 한다.
+
+```commandline
+grouped = historical_data.groupby('Ticker')
+for name, group in grouped:
+    print(f"The {name}'s summary statistics: {group.describe()}") # Display summary statistics for each group
+    
+    # Plot boxplots for each column in the group
+    for column in group.columns:
+        sns.boxplot(data=group[column])
+        plt.title(f"{name}: {column}")
+        plt.show()
+```
+
+이렇게 모든 열에 대한 boxplot을 진행했지만, 열 중에는 Stock Splits 같은 연속형 데이터가 아닌 이벤트성 데이터가 섞여있기도 하고 
+Close와 CurrentPrice 같은 중복된 데이터도 있어서 필요한 데이터만 가지고 따로 리스트를 만들어 거기에 대해서만 시각화를 하기로 한다.
+
+```commandline
+continuous_columns = [
+    'Close', 'Volume',
+    'BookValue', 'ProfitMargins',
+    'EarningsGrowth', 'RevenueGrowth', 'ReturnOnEquity',
+    'ForwardEPS', 'TrailingEPS', 'ForwardPE', 'TrailingPE', 'FreeCashflow'
+]
+
+...
+    # Plot boxplots for each column in the group
+    for column in group.columns:
+        if column in continuous_columns:  # 수정
+            sns.boxplot(data=group[column])
+            plt.title(f"{name}: {column}")
+            plt.show()
+```
+
+시각화 결과, 가격 데이터와 거래량 데이터를 제외한 나머지 값들은 최신의 하나의 값으로 과거 데이터가 전부 대체되어 있었다. 
+이는 해당 데이터가 시계열 데이터가 아니라 단순히 최신 값으로만 기록되어 있기 때문에, 시간에 따른 변화를 분석하는 것이 불가능했다. 
+따라서, 이러한 변수들을 사용한 시계열 분석은 의미가 없다는 결론을 내렸다. 
+찬은 EDA의 방법을 학습한 것이니, 이 경험에 만족하고 다음 과정인 데이터 전처리로 넘어가기로 한다.
+
+### Data Preprocessing
+close price 하나만을 사용한 단순한 선형 회귀 모델과 달리, financial data를 추가한 multi linear regression을 사용하기로 한 찬은 데이터의 단위를 맞추기 위한 데이터 변환의 필요성을 생각한다.
+
+데이터 변환엔 주로 정규화와 표준화 방법이 사용된다.
+다중 선형 회귀 모델에서는 표준화가 더 권장되곤 한다. 이유는 표준화가 특성 간에 상대적인 스케일을 보존하기 떄문이다.
+
+전체 데이터에 대한 표준화를 진행한 뒤 train/validation/test 데이터로 분할시키려 했지만
+이 방식은 메모리 누수를 일으킬 수 있으며, 모델이 훈련 과정에서 테스트 데이터에 대한 정보를 미리 얻게 되어 실제 성능보다 과대평가 되는 결과를 가져올 수 있다는 것을 알게된 찬은
+데이터를 분할한 뒤 각 데이터셋에 대해 표준화를 진행하기로 한다.
+
+데이터 분할 후 표준화를 진행하고, 이를 텐서로 변환시키는 과정에서 데이터셋의 마지막 열인 `Ticker`가
+에러를 일으켜 데이터셋에서 제외시키기로 한다.
+
+```commandline
+from sklearn.preprocessing import StandardScaler
+
+def preprocess(data):
+    # Split the data into numerical and ticker features
+    numerical_data = data.iloc[:, :-1]
+
+    # Define the input X and target Y using time lagged data
+    X = numerical_data.iloc[:-1]
+    Y = numerical_data.iloc[1:]
+
+    # Set ratio for train, validation, and test sets
+    train_ratio = 0.7
+    validation_ratio = 0.2
+    test_ratio = 0.1
+
+    # Calculate the number of points for each set
+    total_points = X.shape[0]
+    train_points = int(total_points * train_ratio)
+    validation_points = int(total_points * validation_ratio)
+    test_points = total_points - train_points - validation_points
+
+    # Split the data sequentially
+    train_X = X[:train_points]
+    validation_X = X[train_points:train_points + validation_points]
+    test_X = X[train_points + validation_points:]
+
+    train_Y = Y[:train_points]
+    validation_Y = Y[train_points:train_points + validation_points]
+    test_Y = Y[train_points + validation_points:]
+
+    # Initialize the StandardScaler
+    scaler_X = StandardScaler()
+    scaler_Y = StandardScaler()
+
+    # Standardize the data
+    train_X = scaler_X.fit_transform(train_X)
+    validation_X = scaler_X.transform(validation_X)
+    test_X = scaler_X.transform(test_X)
+
+    train_Y = scaler_Y.fit_transform(train_Y)
+    validation_Y = scaler_Y.transform(validation_Y)
+    test_Y = scaler_Y.transform(test_Y)
+
+    # Convert the DataFrames to PyTorch tensors
+    train_X = torch.tensor(train_X, dtype=torch.float32)
+    validation_X = torch.tensor(validation_X, dtype=torch.float32)
+    test_X = torch.tensor(test_X, dtype=torch.float32)
+
+    train_Y = torch.tensor(train_Y, dtype=torch.float32)
+    validation_Y = torch.tensor(validation_Y, dtype=torch.float32)
+    test_Y = torch.tensor(test_Y, dtype=torch.float32)
+
+    return train_X, validation_X, test_X, train_Y, validation_Y, test_Y
+```
+
+이렇게 데이터 전처리를 마친 찬은 모델링을 시작하기로 한다.
+단일 선형 회귀 모델에서 확장 가능하도록 정의해놓았기 때문에 모델을 그대로 사용하기로 한다.
+
+```commandline
+from predictor import Predictor
+
+# Define hyperparameters
+input_dim = train_X.shape[1]
+hidden_dim1 = 128
+hidden_dim2 = 64
+output_dim = 1
+learning_rate = 0.001
+epochs = 5000
+patience = 10
+best_loss = float('inf')
+counter = 0
+
+# Initialize the model
+predi = Predictor(input_dim, hidden_dim1, hidden_dim2, output_dim)
+
+# Define the loss function and optimizer
+criterion = torch.nn.MSELoss()
+optimizer = torch.optim.Adam(predi.parameters(), lr=learning_rate)
+
+# Train the model
+for epoch in range(epochs):
+    # Set the model to training mode
+    predi.train()
+    
+    # Forward pass
+    outputs = predi(train_X)
+    loss = criterion(outputs, train_Y)
+
+    # Backward pass and optimization
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    
+    # Set the model to evaluation mode
+    predi.eval()
+
+    # Validation loss
+    with torch.no_grad():
+        validation_output = predi(validation_X)
+        validation_loss = criterion(validation_output, validation_Y)
+        
+   # Early stopping
+    if validation_loss.item() < best_loss:
+        best_loss = validation_loss.item()
+        counter = 0
+    else:
+        counter += 1
+        
+    if counter >= patience:
+        print(f"Stopped at epoch {epoch} with validation loss {validation_loss.item()}")
+        break
+
+    if epoch % 100 == 0:
+        print(f"Epoch: {epoch}, Loss: {loss.item():.4f}, Validation Loss: {validation_loss.item():.4f}")
+        
+    predi.train() # Set the model back to training mode
+        
+# Test the model
+with torch.no_grad():
+    test_output = predi(test_X)
+    test_loss = criterion(test_output, test_Y)
+    print(f"Test Loss: {test_loss.item():.4f}")
+```
+
+모델 학습을 마친 찬은 이제 새로운 데이터를 불러와서 예측을 해보기로 한다.
+yfinance에서 데이터를 fetch 해오는 과정이 새로운 데이터를 불러올 때도 중복되기 때문에, 이를 함수로 만들어 재사용할 수 있게 코드를 수정한다.
+
+```commandline
+def fetch_stock_data(tickers):
+    # Initialize an empty DataFrame for historical data
+    historical_data = pd.DataFrame()
+
+    for ticker in tickers:
+        stock = yf.Ticker(ticker)
+
+        # Fetch 10 years of historical data
+        hist = stock.history(period="10y")
+
+        # Get current info
+        info = stock.info
+        selected_info = {
+            'CurrentPrice': info.get('currentPrice'),
+            'MarketCap': info.get('marketCap'),
+            'BookValue': info.get('bookValue'),
+            'ProfitMargins': info.get('profitMargins'),
+            'EarningsGrowth': info.get('earningsGrowth'),
+            'RevenueGrowth': info.get('revenueGrowth'),
+            'ReturnOnEquity': info.get('returnOnEquity'),
+            'ForwardEPS': info.get('forwardEps'),
+            'TrailingEPS': info.get('trailingEps'),
+            'ForwardPE': info.get('forwardPE'),
+            'TrailingPE': info.get('trailingPE'),
+            'FreeCashflow': info.get('freeCashflow')
+        }
+
+        # Repeat the info data for each date in the historical data
+        for key, value in selected_info.items():
+            hist[key] = value
+
+        # Add a column for the ticker symbol
+        hist['Ticker'] = ticker
+
+        # Use pd.concat to append this data to the main DataFrame
+        historical_data = pd.concat([historical_data, hist], ignore_index=True)
+
+    # Reset the index of the DataFrame
+    historical_data.reset_index(inplace=True, drop=True)
+
+    return historical_data
+
+historical_data = fetch_stock_data(tickers)
+new_data = fetch_stock_data(["NFLX"]) # Fetch new data
+```
+
+새로운 데이터(Netflix)를 불러온 찬은 모델에 적용하기 전에 데이터 전처리를 진행한다.
+모델의 예측을 수행한 결과 값이 표준화된 값인걸 확인한 찬은 이를 다시 역변환하는 과정이 필요하다는 것을 알게된다.
+그걸 위해선 표준화를 진행할 때 사용한 scaler가 필요해서 함수 외부에서 선언해주기로 한다.
+
+```commandline
+# Initialize the StandardScaler
+scaler_X = StandardScaler()
+scaler_Y = StandardScaler()
+
+def preprocess(data, scaler_X, scaler_Y):
+    ...
+    
+    return train_X, validation_X, test_X, train_Y, validation_Y, test_Y
+    
+# Make predictions
+new_data = fetch_stock_data(["NFLX"]) # Fetch new data
+new_train_X, _, _, _, _, _ = preprocess(new_data, scaler_X, scaler_Y) # Preprocess the new data
+
+predi.eval()
+with torch.no_grad():
+    new_prediction = predi(new_train_X) # Make predictions
+    prediction_numpy = new_prediction.numpy() # Convert the tensor to a NumPy array
+    prediction_actual = scaler_Y.inverse_transform(prediction_numpy) # Inverse transform the predictions
+
+    print(f"New data prediction: {prediction_actual}")
+```
+
+텐서에서 numpy로, 표준화된 값에서 역변환된 값으로 변환을 진행하는 중에 에러가 발생한다.
+
+> ValueError: non-broadcastable output operand with shape (1761,1) doesn't match the broadcast shape (1761,19)
+
+이 에러는 preprocess 함수 내의 scaler가 19개의 특성을 가진 데이터에 대해 fit_transform을 진행했기 때문에, 역변환 시에도 19개의 특성을 가진 데이터에 대해 inverse_transform을 진행해야 한다는 것을 알려주는 에러이다.
+예측까지 진행한 데이터셋이 하나의 차원을 갖는건 문제가 없으니, 찬은 preprocess 함수 내에서 데이터를 재정의한다.
+
+```commandline
+def preprocess(data, scaler_X, scaler_Y):
+    # Split the data into numerical and ticker features
+    numerical_data = data.iloc[:, :-1]
+
+    # Define the input X and target Y using time lagged data
+    X = numerical_data.iloc[:-1]
+    Y = numerical_data['Close'].iloc[1:].values.reshape(-1, 1)
+    
+    ...
+    
+    return train_X, validation_X, test_X, train_Y, validation_Y, test_Y
+```
+
+이렇게 데이터 재정의와 함께 역변환까지 진행한 찬은 이제 모델의 예측을 확인해본다.
+
+![training_result](images/2nd_training_result.png)
+![prediction](images/2nd_prediction.png)
+
+단일 선형 회귀 모델이 예측한 결과보다 훨씬 더 정확한 예측을 보여준 predi에게 찬은 깊은 감명을 받았다.
+찬은 predi와 함께 더 나아질 내일을 기대하며, 묵묵히 한걸음씩 나아가기로 한다.
+
+![scene4](images/scene4.png)
