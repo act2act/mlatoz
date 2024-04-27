@@ -204,7 +204,7 @@ with torch.no_grad():
     print(f"Test Loss: {test_loss.item():.4f}")
 
 # Make predictions
-new_data = fetch_stock_data(["NFLX"]) # Fetch new data
+new_data = fetch_stock_data(["ADBE"]) # Fetch new data
 new_train_X, _, _, _, _, _ = preprocess(new_data, scaler_X, scaler_Y) # Preprocess the new data
 
 predi.eval()
