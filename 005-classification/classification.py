@@ -204,11 +204,18 @@ for epoch in range(epochs):
 
     classi.eval() # set the model to evaluation mode
     validation_loss = 0
+    class_labels = {0: 'stalwartz', 1: 'growth'}
     with torch.no_grad():
         for features, targets, tickers in validation_loader:
             outputs = classi(features)
             loss = criterion(outputs, targets.long())
             validation_loss += loss.item()
+
+            _, predicted = torch.max(outputs, 1)
+            predicted_labels = [class_labels[p.item()] for p in predicted]
+
+            for ticker, label in zip(tickers, predicted_labels):
+                print(f"{ticker} is predicted as {label}.")
 
     validation_loss /= len(validation_loader)
 
