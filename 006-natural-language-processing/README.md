@@ -508,7 +508,7 @@ print(decode(m.generate(torch.zeros((1, 1), dtype=torch.long), max_new_tokens=10
 # Yorgowatamy m Ithas, baithenese foy d 
 ```
 
-Before we move on, do some refactoring to make the code.
+Before we move on, do some refactoring to make the code more readable.
 
 ```python
 # Hyperparameters
@@ -741,3 +741,515 @@ Let's take version 4 apart one by one.
    - Query: Roughly speaking, What am i looking for? This is also a representation of the current token. It's used to calculate the attention score with the key of every other token. 
 3. What is the head size? It's the size of the hidden representation of the key, query, and value.
 Bigger head size means more information can be stored in the hidden representation.
+
+I brought notes that Andrej gave us in the lecture.
+- Attention is a communication mechanism.
+- There is no notion of space. Attention simply acts over a set of vectors.
+- There is no communication across the batch dimension.
+- In an "encoder" attention block just delete the single line that does masking with `tril`, allowing all tokens to communicate.
+"Decoder" attention block has triangular masking, and is usually used in autoregressive settings, like language modeling.
+- "Self-attention" just means that the keys and values are produced from the same source as queries. In "cross-attention", the queries get produced from x, but the keys and values come from some other, external source (e.g. an encoder module).
+- "Scaled" attention additional divides `wei` by 1/sqrt(head_size). This makes it so when input Q, K are unit variance, wei will be unit variance too and Softmax will stay diffuse and not saturate too much. Illustration below.
+
+![scaled-attention](./images/attention.png)
+
+```python
+k = torch.randn(B,T,head_size)
+q = torch.randn(B,T,head_size)
+wei = q @ k.transpose(-2, -1) #* head_size**-0.5
+
+print(k.val()) # tensor(1.0966)
+print(q.val()) # tensor(0.9416)
+print(wei.val()) # tensor(16.1036)
+
+wei = q @ k.transpose(-2, -1) * head_size**-0.5
+print(wei.val()) # tensor(1.1053)
+```
+
+Let's now take our self-attention knowledge and implement it in.
+
+```python
+class Head(nn.Module):
+    """one head of self-attention"""
+
+    def __init__(self, head_size):
+        super().__init__()
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
+    def forward(self, x):
+        B, T, C = x.shape
+        k = self.key(x)
+        q = self.query(x)
+        # compute attention scores ("affinities")
+        wei = q @ k.transpose(-2, -1) * C**-0.5
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+        wei = F.softmax(wei, dim=-1)
+        # perform the weighted aggregation of the values
+        v = self.value(x)
+        out = wei @ v
+        return out
+
+class BigramLanguageModel(nn.Module):
+
+    def __init__(self, vocab_size):
+        super().__init__()
+        ...
+        self.sa_head = Head(n_embd)
+        self.lm_head = nn.Linear(n_embd, vocab_size)
+
+    def forward(self, idx, targets=None):
+        ...
+        x = tok_emb + pos_emb # (B, T, C)
+        x = self.sa_head(x) # apply one head of self-attention. (B, T, C)
+        logits = self.lm_head(x) # (B, T, vocab_size)
+
+        ...
+
+        return logits, loss
+
+    def generate(self, idx, max_new_tokens):
+        for _ in range(max_new_tokens):
+            idx_cond = idx[:, -block_size:] # crop idx to the last block_size tokens
+            logits, loss = self(idx_cond) # get the predictions
+            ...
+        return idx
+```
+ 
+And we train the model.
+
+```python
+# step 0: train loss 4.2000, val loss 4.2047
+# step 200: train loss 3.0954, val loss 3.1031
+# step 400: train loss 2.7952, val loss 2.8118
+# ...
+# step 9400: train loss 2.3614, val loss 2.3760
+# step 9600: train loss 2.3545, val loss 2.3827
+# step 9800: train loss 2.3522, val loss 2.3825
+
+# Whe.
+# 
+# Anonwt hereity ea.
+# 
+# JAet it ried:
+# Nouth of est winerverd yugrout ere thaty Gsavew arte hord;
+# To thad ard
+# I: pourid thyo:
+# Tyoulitordeef anthen copccodell.
+# Panct! Ge.
+# 
+# GHer hadchome, ands ud'simisibradbe to.
+# 
+# LARLAUTEEN:
+# O pe maspes st Iwic:
+# Agingss, tral thas thoury,
+# G Sou wean-d pot pll thint san,-sff romes I blerithemikin:
+# Aath sth wang.Wich sthe'tthe cor anessemig.
+# ENS EATORIOMIF ARED DYY:
+# I:
+# Be ffrake, hise?
+# 
+# SALYout, ho cherancke hiner aveme deorter maverspr umat, bloullil dt meithino.
+```
+
+Better losses are came out, but the results are still bad.
+
+What we can do to improve the model is to increase the number of heads in the self-attention mechanism.
+
+```python
+class MultiHeadAttention(nn.Module):
+    """multiple heads of self-attention in parallel"""
+
+    def __init__(self, num_heads, head_size):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+
+    def forward(self, x):
+        return torch.cat([h(x) for h in self.heads], dim=-1)
+
+class BigramLanguageModel(nn.Module):
+
+    def __init__(self, vocab_size):
+        ...
+        self.sa_heads = MultiHeadAttention(4, n_embd//4) # i.e. 4 heads of 8-dimensional self-attention
+        self.lm_head = nn.Linear(n_embd, vocab_size)
+
+    def forward(self, idx, targets=None):
+        ...
+        x = self.sa_heads(x) # apply one head of self-attention. (B, T, C)
+        logits = self.lm_head(x) # (B, T, vocab_size)
+
+        ...
+
+        return logits, loss
+
+    def generate(self, idx, max_new_tokens):
+        for _ in range(max_new_tokens):
+            ...
+        return idx
+```
+
+Training the model again.
+
+```python
+# step 0: train loss 4.2227, val loss 4.2226
+# step 200: train loss 3.0267, val loss 3.0312
+# step 400: train loss 2.7308, val loss 2.7458
+# ...
+# step 9400: train loss 2.1926, val loss 2.2206
+# step 9600: train loss 2.1879, val loss 2.2329
+# step 9800: train loss 2.1832, val loss 2.2295
+
+# Whe.
+# 
+# CUnn to areity ea.
+# 
+# JUELIO:
+# 
+# Med:
+# Nouth hifest wilerverd your bet ther ange, do whatte ald-buto thad.
+# 
+# LUE:
+# Dour arthe of youriell bef anty.
+# Thipccomell.
+# 
+# CAUS:
+# Ge.
+# 
+# GUyou hou, me, andssed'sis sibredbove swat do cu suts wee mastes sllses poo ingss, trall has toour son cou weant the to To with sam, shim Kins'l blorivon.
+# 
+# So:
+# Ankins un bot Wich sot 'mencon all essemig.
+# ENIUCHES:
+# Thold thivester's phir rake shies?
+# 
+# SALY Lasthe cherincke hinet ave end orter.
+# 
+# GEdsprdemak, 't
+# Holl het my thing.
+```
+
+We can make the model learns more complex representation of the input data.
+The feed-forward block is what we want.
+
+```python
+class FeedForward(nn.Module):
+    """a simple linear layer followed by a non-linearity"""
+
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, n_embd),
+            nn.ReLU(),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+class BigramLanguageModel(nn.Module):
+
+    def __init__(self, vocab_size):
+        ...
+        self.ffwd = FeedForward(n_embd)
+        self.lm_head = nn.Linear(n_embd, vocab_size)
+
+    def forward(self, idx, targets=None):
+        ...
+        x = self.ffwd(x) # (B, T, C)
+        ...
+
+        return logits, loss
+
+    def generate(self, idx, max_new_tokens):
+        ...
+        return idx
+```
+
+```python
+# step 0: train loss 4.1996, val loss 4.1995
+# step 200: train loss 2.9488, val loss 2.9686
+# step 400: train loss 2.6662, val loss 2.6786
+# ...
+# step 9400: train loss 2.1513, val loss 2.1863
+# step 9600: train loss 2.1598, val loss 2.2065
+# step 9800: train loss 2.1477, val loss 2.1935
+ 
+# Paten
+# Bhe and dold ments blakf, thou gad, thou not whour hight, contolucens pong gien will a ford uray, of agied thend?
+# Aurds for reithrubt littome.
+# Isin:
+# Is of ond there: allesss!
+# I hichim,
+# De.
+# Ivaive forty laine! ind of thee by kre
+# Sarst:
+# Acone then tine fould
+# And, tot be thim, anikns tromankes:
+# Wak bod ing adath ras,
+# Eme?
+# 
+# Carutoe armu; my't stroiond anveloce ath
+# Butut?
+# 
+# AUCKN RONCENNCUTEME:
+# Seane alatiours,
+# Nu you pove of roil woh is ku mayou my ite ther so, pine cator rest
+# Yokhe do my lock 
+```
+
+There is more room for improvement. We can set the number of blocks in our model.
+The reason why we need to set the number of blocks is that the model can learn more complex patterns in the data.
+The output of each bloock serves as the input to the next, allowing the model to build up a hierarchy of representations.
+
+```python
+class Block(nn.Module):
+    """a transformer block: communication followed by computation"""
+    
+    def __init__(self, n_embd, n_head):
+        super().__init__()
+        head_size = n_embd // n_head
+        self.sa = MultiHeadAttention(n_head, head_size)
+        self.ffwd = FeedForward(n_embd)
+        
+    def forward(self, x):
+        x = self.sa(x)
+        x = self.ffwd(x)
+        return x
+
+class BigramLanguageModel(nn.Module):
+
+    def __init__(self, vocab_size):
+        super().__init__()
+        self.token_embedding = nn.Embedding(vocab_size, n_embd)
+        self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head=4) for _ in range(4)])
+        self.lm_head = nn.Linear(n_embd, vocab_size)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        # idx and targets are both (B, T) tensor of integers
+        tok_emb = self.token_embedding(idx) # (B, T, C)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
+        x = tok_emb + pos_emb # (B, T, C)
+        x = self.blocks(x) # (B, T, C)
+        logits = self.lm_head(x) # (B, T, vocab_size)
+
+    ...
+```
+
+As model gets deeper, it suffers from optimization issues.
+To resolve this, we can use a technique called skip connections, also known as residual connections.
+This technique allows gradients to flow directly through several layers, which helps to prevent the vanishing gradient problem.
+
+```python
+class MultiHeadAttention(nn.Module):
+    """multiple heads of self-attention in parallel"""
+
+    def __init__(self, num_heads, head_size):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(num_heads*head_size, n_embd)
+
+    def forward(self, x):
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        out = self.proj(out)
+        return out
+
+class FeedForward(nn.Module):
+    """a simple linear layer followed by a non-linearity"""
+
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd),
+            nn.ReLU(),
+            nn.Linear(4 * n_embd, n_embd)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+class Block(nn.Module):
+    """a transformer block: communication followed by computation"""
+
+    def __init__(self, n_embd, n_head):
+        super().__init__()
+        head_size = n_embd // n_head
+        self.sa = MultiHeadAttention(n_head, head_size)
+        self.ffwd = FeedForward(n_embd)
+
+    def forward(self, x):
+        x = x + self.sa(x)
+        x = x + self.ffwd(x)
+        return x
+```
+
+```python
+# step 0: train loss 4.5120, val loss 4.5043
+# step 200: train loss 2.5596, val loss 2.5641
+# step 400: train loss 2.4312, val loss 2.4384
+# ...
+# step 9400: train loss 1.8804, val loss 2.0201
+# step 9600: train loss 1.8919, val loss 2.0254
+# step 9800: train loss 1.8818, val loss 2.0135
+# 
+# I have legon?
+# 
+# KING HAMPAROPSSAMNIUS:
+# Now, whique fair, thy our wit, let we it me past to is a rebuck her faight tither; and of thy chall oun bed ables trein here fall thy wed: but ereats, but patim, what my granep
+# Is call, comes touch all the was be in a lest.
+# I' hust tod the well. there my head's felst lover anace, that vy met tonce,
+# Mestreen, feary treng'rrop cous unness,-Somet is erquee he lase,
+# Withe treep a hatight sprech out wort.
+# And dreare
+# Wouved dray, trace;
+# The lusagut the say, the an
+```
+
+The result is more English-like, but it's still not perfect.
+
+In a neural network, each layer's inputs can vary widely, leading to what's known as internal covariate shift.
+This can slow down training and make it harder for the network to converge.
+Normalization techniques address this issue by scaling the inputs to each layer.
+
+LayerNorm works by normalizing inputs across the features instead of normalizing the features across the batch dimension as in BatchNorm.
+The main advantage of LayerNorm is that it behaves the same way during training and inference, and it doesn't depend on the batch size.
+
+```python
+class Block(nn.Module):
+    """a transformer block: communication followed by computation"""
+
+    def __init__(self, n_embd, n_head):
+        super().__init__()
+        head_size = n_embd // n_head
+        self.sa = MultiHeadAttention(n_head, head_size)
+        self.ffwd = FeedForward(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
+
+    def forward(self, x):
+        x = x + self.sa(x)
+        x = x + self.ffwd(x)
+        x = x + self.sa(self.ln1(x))
+        x = x + self.ffwd(self.ln2(x))
+        return x
+
+class BigramLanguageModel(nn.Module):
+
+    def __init__(self, vocab_size):
+        super().__init__()
+        self.token_embedding = nn.Embedding(vocab_size, n_embd)
+        self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)])
+        self.ln_f = nn.LayerNorm(n_embd) # final layer norm
+        self.lm_head = nn.Linear(n_embd, vocab_size)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        # idx and targets are both (B, T) tensor of integers
+        tok_emb = self.token_embedding(idx) # (B, T, C)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
+        x = tok_emb + pos_emb # (B, T, C)
+        x = self.blocks(x) # (B, T, C)
+        x = self.ln_f(x) # (B, T, C)
+        logits = self.lm_head(x) # (B, T, vocab_size)
+
+    ...
+```
+
+```python
+# step 0: train loss 4.2585, val loss 4.2577
+# step 200: train loss 2.5766, val loss 2.5739
+# step 400: train loss 2.4298, val loss 2.4247
+# ...
+# step 9400: train loss 1.8880, val loss 2.0262
+# step 9600: train loss 1.8838, val loss 2.0182
+# step 9800: train loss 1.8696, val loss 1.9981
+# 
+# I have like
+# Hoper back shis lirike you bout my be faith the our as is mucher's gript: but is know'd to ever epears the not looks your know undied ables treach the call thy wed graw ereart, but gone of is do berce! by,
+# Thouncce ight upon
+# thrath ovest is facterve I whucpb od the we arms.
+# 
+# AUMPI:
+# 
+# Henrue hink.
+# 
+# MEBTich, that vy merought with in engue you the part.
+# Tchie unnath,--sict in erst thou lord, all miting, a hath all prech our worlo.
+# 
+# ELIZABES
+# As vooth's hath ches be luse us the lack the an
+```
+
+The model is getting better and better.
+
+Now, we scale the model up.
+We need to create a few variables, and adding dropout to the model, due to the overfitting problem.
+
+```python
+# Hyperparameters
+batch_size = 64 # how many independent sequences will we process in parallel?
+block_size = 256 # what is the maximum length for prediction?
+max_iters = 5000
+eval_interval = 500
+learning_rate = 1e-3
+eval_iters = 200
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+n_embd = 384
+n_head = 6
+n_layer = 6
+dropout = 0.2
+# ----------------
+```
+
+I set the hyperparameters, but it's not working because I run the code on CPU.
+So, I break down some variables to make it work on CPU.
+
+```python
+# Hyperparameters
+batch_size = 16 # how many independent sequences will we process in parallel?
+block_size = 128 # what is the maximum length for prediction?
+max_iters = 5000
+eval_interval = 500
+learning_rate = 1e-3
+eval_iters = 200
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+n_embd = 192
+n_head = 3
+n_layer = 3
+dropout = 0.2
+# ----------------
+```
+
+```python
+# step 0: train loss 4.3525, val loss 4.3480
+# step 200: train loss 2.4257, val loss 2.4409
+# step 400: train loss 2.1526, val loss 2.1940
+# ...
+# step 4400: train loss 1.4634, val loss 1.6566
+# step 4600: train loss 1.4560, val loss 1.6578
+# step 4800: train loss 1.4442, val loss 1.6412
+# 
+# How dear:
+# A good witus, courties and which derike my desire,
+# Is have so kill not them was but shape,
+# Fair struch would and salether of surp in law is till they.
+# 
+# MENENIUS:
+# No,
+# Would me well; mility, hrow, Juliet on, glace
+# He must storymornad off his calls, deskines
+# Than ix the be nor of Vily
+# To weln must true! you, now thost be, hear unto my son touch too
+# quuired so mastinguater, as againes, a to the wobernign,
+# With shall So know, or acce; you
+# have prepose death thingly fittlemant;
+# To neve your 
+```
+
+It's good enough for now.
